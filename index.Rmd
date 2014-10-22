@@ -1,0 +1,120 @@
+---
+title: "Practical Machine Learning Project"
+author: "James Brink"
+date: "October 22nd, 2014"
+output: 
+html_document:
+keep_md: true
+---
+###Synopsis
+In this project we will use the dataset from <a href="http://groupware.les.inf.puc-rio.br/har">http://groupware.les.inf.puc-rio.br/har</a>.  This data was collected from accelerometers that were placed on the belt, forearm, arm, and dumbell of six participants.  These participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways.  The data has been split into two separate datasets.  One dataset contains 19,622 observations, we will use these observations to create a model to predict the how the exercise is being done for each of the given 20 observations in the second dataset.
+<br><br>
+
+###Loading the Data
+Load the caret library, set the seed, and read the training and testing data into R.  When we read the data in we will replace any empty values with NA.
+```{r message=FALSE}
+library(caret)
+set.seed(10)
+```
+
+```{r cache=TRUE}
+training <- read.csv("pml-training.csv", na.strings=c("NA","","#DIV/0!"), header=TRUE)
+testing <- read.csv("pml-testing.csv", na.strings=c("NA","","#DIV/0!"), header=TRUE)
+```
+<br><br>
+
+###Subsetting the Data
+After looking at the columns in our dataset we decide to remove the first 7 columns in the dataset. These would either not contribute to or possibly just confuse our algorithm when we create our model.  These were columns with non-numeric values or numeric variables like timestamps and observation numbers that would not be useful in developing our model.
+```{r}
+training <- training[,8:length(names(training))]
+testing <- testing[,8:length(names(testing))]
+```
+<br>
+
+Next we need to figure out if we can eliminate columns with NA values.  To do this we first looked at how many rows were in our training set.
+```{r}
+nrow(training)
+```
+<br>
+
+Next we figured out how many NA values were in each column, put that output into a dataframe, and then measured whether any of the columns with NA values had less than 19,000 NA values, but more than zero.
+```{r}
+naTest <- as.data.frame(colSums(is.na(training)))
+names(naTest)[1] <- "NAs"
+naTest[naTest$NAs>0 & naTest$NAs<19000,]
+```
+<br>
+
+We found that all of the columns in our `r nrow(training)` row dataset which had NA values had at least 19000 NA values in that column.  It seems safe to eliminate this columns from our training set, we will do the same for the testing set as well.
+```{r}
+training <- training[,which(as.numeric(colSums(is.na(training)))==0)]
+testing <- testing[,which(as.numeric(colSums(is.na(testing)))==0)]
+```
+<br>
+
+Now we will just check to confirm that both our training and testing sets contain the same columns.  We don't include the last columns in our test because we know they are different, "classe" in the training set and "problem_id" in the testing set, this difference is intentional and correct.
+```{r}
+all.equal(names(training)[-length(training)], names(testing)[-length(testing)])
+```
+<br>
+
+Now we can move forward with the training set, we will not be touching the testing set again until its time to test our model.  Let's look at the columns that we have left.
+```{r}
+names(training)
+```
+<br><br>
+
+###Partitioning the Training Data
+Since this is a very large dataset we will split it into two smaller training sets, training1 and training2. Inside each training set we will partition it further into a training and testing set (70% training, 30% testing).  We will use the training subset of each training set to develop a model and then test that model with its corresponding testing subset.  After we test both models we will use the more accurate of the two to make predictions on our untouched testing set.  When fitting each of the two models we will use 4-fold cross validation to increase the accuracy of our models.  Given the size of the dataset this should allow the cross validation to increase the accuracy of models to a point where trying to combine both of our fitted models will not be necessary.
+```{r}
+bigPartition <- createDataPartition(y=training$classe, p=0.5, list=FALSE)
+training1 <- training[bigPartition,]
+training2 <- training[-bigPartition,]
+
+smallPartition1 <- createDataPartition(y=training1$classe, p=0.7, list=FALSE)
+t1Train <- training1[smallPartition1,]
+t1Test <- training1[-smallPartition1,]
+
+smallPartition2 <- createDataPartition(y=training2$classe, p=0.7, list=FALSE)
+t2Train <- training2[smallPartition2,]
+t2Test <- training2[-smallPartition2,]
+```
+<br><br>
+
+###Fitting the Models
+Next we create the model for training1 using the random forests method.  We will also use 4-fold cross validation.  This means that the data will be subset into 4 partitions and four different models will be created.  The four models will each use a different one of the four partitions as a test set and then train from the remaining three.  Once all four models are created they will be averaged into a single model that is returned to us.
+```{r message=FALSE, cache=TRUE}
+fit1 <- train(classe ~ ., data = t1Train, trControl = trainControl(method = "cv", number = 4), method="rf")
+fit1
+```
+<br>
+
+We then can create a confusion matrix to test the accuracy of our model.
+```{r message=FALSE}
+confMat1 <- confusionMatrix(t1Test$classe, predict(fit1, t1Test))
+confMat1
+```
+Accuracy of <b>`r confMat1$overall['Accuracy'] * 100`%</b> is very high.<br>
+This implies an out of sample error of <b>`r 1 - confMat1$overall['Accuracy']`</b>.
+<br><br>
+
+Now we do the same process of creating a model and generating a confusion matrix for the training2 set.
+```{r message=FALSE, cache=TRUE}
+fit2 <- train(classe ~ ., data = t2Train, trControl = trainControl(method = "cv", number = 4), method="rf")
+fit2
+```
+
+```{r message=FALSE}
+confMat2 <- confusionMatrix(t2Test$classe, predict(fit2, t2Test))
+confMat2
+```
+Accuracy of <b>`r confMat2$overall['Accuracy'] * 100`%</b> is almost identical to the first model.<br>
+This implies an out of sample error of <b>`r 1 - confMat2$overall['Accuracy']`</b>.
+<br><br><br>
+
+###Making Predictions
+Since our first model slightly beat out our second we will use that model to generate the predictions based on the test set.
+```{r}
+predict(fit1, testing)
+```
+
